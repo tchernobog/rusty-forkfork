@@ -382,7 +382,7 @@ mod test {
             rusty_fork_id!(),
             |_| (),
             |child, _| child.wait().unwrap(),
-            || panic!("testing a panic, nothing to see here"),
+            || -> () { panic!("testing a panic, nothing to see here") },
         )
         .unwrap();
         assert_eq!(70, status.code().unwrap());

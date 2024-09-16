@@ -67,9 +67,48 @@ use crate::child_wrapper::ChildWrapper;
 ///
 /// Using the timeout feature requires the `timeout` feature for this crate to
 /// be enabled (which it is by default).
+///
+/// Additionally, you can pass a setup function to alter the environment
+/// or options of the new process. Care should be taken not to set variables
+/// starting with `RUSTY_FORK_`, which are reserved.
+///
+/// This can be useful e.g. to run pre-initialization of environment
+/// variables that need to be set before the test itself starts, such as
+/// `LD_LIBRARY_PATH` for `cdylib`s.
+///
+/// The signature of this function is
+/// `fn setup(child: &mut std::process::Command)`.
+///
+/// Using it is done via the `setup` attribute, like this:
+///
+/// ```
+/// use rusty_forkfork::rusty_fork_test;
+/// use std::env;
+/// use std::error::Error;
+/// use std::process::Command;
+///
+/// fn change_child_env(child: &mut Command) {
+///     child.env("PASSED_DOWN", "before_running");
+/// }
+///
+/// rusty_fork_test! {
+///     #![rusty_fork(setup = change_child_env)]
+/// # /*
+///     #[test]
+/// # */
+///     fn my_test() -> Result<(), Box<dyn Error>> {
+///         assert_eq!(env::var("PASSED_DOWN")?, "before_running");
+///         Ok(())
+///     }
+///
+///     // more tests...
+/// }
+/// # fn main() { my_test(); }
+/// ```
+///
 #[macro_export]
 macro_rules! rusty_fork_test {
-    (#![rusty_fork(timeout_ms = $timeout:expr)]
+    (#![rusty_fork(timeout_ms = $timeout:expr, setup = $setup:path)]
      $(
          $(#[$meta:meta])*
          fn $test_name:ident() $( -> $test_return:ty )? $body:block
@@ -92,20 +131,44 @@ macro_rules! rusty_fork_test {
             $crate::fork(
                 $crate::rusty_fork_test_name!($test_name),
                 $crate::rusty_fork_id!(),
-                $crate::fork_test::no_configure_child,
+                $setup,
                 supervise, body).expect("forking test failed")
         }
     )* };
 
+    // Case where no parameter is provided
     ($(
          $(#[$meta:meta])*
          fn $test_name:ident() $( -> $test_return:ty )? $body:block
     )*) => {
         rusty_fork_test! {
-            #![rusty_fork(timeout_ms = 0)]
-
+            #![rusty_fork(timeout_ms = 0, setup = $crate::fork_test::no_configure_child)]
             $($(#[$meta])* fn $test_name() $( -> $test_return )?  $body)*
         }
+    };
+
+    // Case where only the timeout is provided
+    (#![rusty_fork(timeout_ms = $timeout:expr)]
+     $(
+         $(#[$meta:meta])*
+         fn $test_name:ident() $( -> $test_return:ty )? $body:block
+    )*) => {
+       rusty_fork_test! {
+           #![rusty_fork(timeout_ms = $timeout, setup = $crate::fork_test::no_configure_child)]
+           $($(#[$meta])* fn $test_name() $( -> $test_return )?  $body)*
+       }
+    };
+
+    // Case where only the setup function is provided
+    (#![rusty_fork(setup = $setup:path)]
+     $(
+         $(#[$meta:meta])*
+         fn $test_name:ident() $( -> $test_return:ty )? $body:block
+    )*) => {
+       rusty_fork_test! {
+           #![rusty_fork(timeout_ms = 0, setup = $setup)]
+           $($(#[$meta])* fn $test_name() $( -> $test_return )?  $body)*
+       }
     };
 }
 
